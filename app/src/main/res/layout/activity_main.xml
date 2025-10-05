@@ -3,18 +3,28 @@
     android:orientation="vertical"
     android:gravity="center"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:padding="16dp">
+
+    <TextView
+        android:id="@+id/tvAngle"
+        android:text="Угол: 90°"
+        android:textSize="24sp"
+        android:layout_marginBottom="24dp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content" />
 
     <Button
-        android:id="@+id/btnOn"
+        android:id="@+id/btnIncrease"
+        android:text="➕ Увеличить угол"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="LED ON" />
+        android:layout_marginBottom="12dp" />
 
     <Button
-        android:id="@+id/btnOff"
+        android:id="@+id/btnDecrease"
+        android:text="➖ Уменьшить угол"
         android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:text="LED OFF" />
+        android:layout_height="wrap_content" />
+
 </LinearLayout>
