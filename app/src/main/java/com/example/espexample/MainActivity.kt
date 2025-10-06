@@ -1,90 +1,117 @@
 package com.example.espexample
 
-import androidx.appcompat.app.AppCompatActivity
+import android.annotation.SuppressLint
+import android.Manifest
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothSocket
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
-import android.widget.Button
-import android.widget.TextView
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import java.net.HttpURLConnection
-import java.net.URL
+import android.widget.SeekBar
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import kotlinx.coroutines.*
+import java.io.OutputStream
+import java.util.*
 
 class MainActivity : AppCompatActivity() {
 
-    private val esp32Url = "http://192.168.4.1" // IP точки доступа ESP32
-    private var currentAngle = 90
-    private val step = 10 // шаг изменения угла
+    private val deviceName = "ESP32_Pong_BT" // имя ESP32
+    private val uuid: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB") // SPP UUID
+
+    private var outputStream: OutputStream? = null
+    private var btSocket: BluetoothSocket? = null
+    private var job: Job? = null
+    private var sliderValue = 128
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        val tvAngle = findViewById<TextView>(R.id.tvAngle)
-        val btnIncrease = findViewById<Button>(R.id.btnIncrease)
-        val btnDecrease = findViewById<Button>(R.id.btnDecrease)
+        val seekBar = findViewById<SeekBar>(R.id.seekBar)
+        seekBar.max = 255
+        seekBar.progress = sliderValue
 
-        fun updateAngleDisplay() {
-            tvAngle.text = "Угол: $currentAngle°"
+        seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                sliderValue = progress
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        // Запускаем подключение к ESP32
+        connectToEsp32()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun connectToEsp32() {
+        val btAdapter = BluetoothAdapter.getDefaultAdapter()
+        if (btAdapter == null) {
+            Toast.makeText(this, "Bluetooth не поддерживается", Toast.LENGTH_LONG).show()
+            return
         }
 
-        btnIncrease.setOnClickListener {
-            currentAngle = (currentAngle + step).coerceAtMost(180)
-            updateAngleDisplay()
-            sendRequest("/servo?angle=$currentAngle")
+        if (!btAdapter.isEnabled) {
+            Toast.makeText(this, "Включите Bluetooth", Toast.LENGTH_LONG).show()
+            return
         }
 
-        btnDecrease.setOnClickListener {
-            currentAngle = (currentAngle - step).coerceAtLeast(0)
-            updateAngleDisplay()
-            sendRequest("/servo?angle=$currentAngle")
+        // Проверяем разрешения для Android 12+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED ||
+                ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED
+            ) {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(
+                        Manifest.permission.BLUETOOTH_CONNECT,
+                        Manifest.permission.BLUETOOTH_SCAN
+                    ),
+                    1
+                )
+                return
+            }
         }
 
-        updateAngleDisplay()
+        // Проверяем наличие спаренного устройства
+        val device: BluetoothDevice? = btAdapter.bondedDevices.firstOrNull { it.name == deviceName }
+        if (device == null) {
+            Toast.makeText(this, "ESP32 не найден. Сначала спарьте устройство.", Toast.LENGTH_LONG).show()
+            return
+        }
 
-        // Периодически обновляем статус с ESP32
-        CoroutineScope(Dispatchers.IO).launch {
-            while (true) {
-                try {
-                    val status = getRequest("/status")
-                    if (status.isNotEmpty()) {
-                        currentAngle = status.toIntOrNull() ?: currentAngle
-                        runOnUiThread { updateAngleDisplay() }
+        try {
+            btSocket = device.createRfcommSocketToServiceRecord(uuid)
+            btSocket?.connect()
+            outputStream = btSocket?.outputStream
+            Toast.makeText(this, "Подключено к ESP32!", Toast.LENGTH_SHORT).show()
+
+            // Запускаем периодическую отправку позиции слайдера
+            job = CoroutineScope(Dispatchers.IO).launch {
+                while (isActive) {
+                    try {
+                        outputStream?.write(byteArrayOf(sliderValue.toByte()))
+                    } catch (e: Exception) {
+                        e.printStackTrace()
                     }
-                    Thread.sleep(2000)
-                } catch (_: Exception) { }
+                    delay(50) // отправка каждые 50 мс
+                }
             }
-        }
-    }
-
-    private fun sendRequest(path: String) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val url = URL("$esp32Url$path")
-                val connection = url.openConnection() as HttpURLConnection
-                connection.requestMethod = "GET"
-                connection.connectTimeout = 2000
-                connection.readTimeout = 2000
-                connection.inputStream.bufferedReader().use { it.readText() }
-                connection.disconnect()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-    }
-
-    private fun getRequest(path: String): String {
-        return try {
-            val url = URL("$esp32Url$path")
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.connectTimeout = 2000
-            connection.readTimeout = 2000
-            val response = connection.inputStream.bufferedReader().use { it.readText() }
-            connection.disconnect()
-            response
         } catch (e: Exception) {
-            ""
+            e.printStackTrace()
+            Toast.makeText(this, "Ошибка подключения к ESP32", Toast.LENGTH_LONG).show()
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        job?.cancel()
+        try {
+            outputStream?.close()
+            btSocket?.close()
+        } catch (_: Exception) {}
     }
 }

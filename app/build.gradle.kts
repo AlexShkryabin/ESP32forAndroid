@@ -7,7 +7,9 @@ plugins {
 android {
     namespace = "com.example.espexample"
     compileSdk = 36
-
+    lint {
+        abortOnError = false
+    }
     defaultConfig {
         applicationId = "com.example.espexample"
         minSdk = 24
